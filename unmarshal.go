@@ -1,7 +1,6 @@
 package gopymarshal
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"math"
@@ -27,46 +26,43 @@ var (
 	ERR_UNKNOWN_CODE = errors.New("unknown code")
 )
 
+type ByteReader interface {
+	ReadByte() (byte, error)
+	Read(p []byte) (n int, err error)
+}
+
 // Unmarshal data serialized by python
-func Unmarshal(buffer *bytes.Buffer) (ret interface{}, retErr error) {
-	ret, _, retErr = Unmarshal2(buffer)
-	return
-}
-
-// Unmarshal data serialized by python, returning the unused portion.
-func Unmarshal2(buffer *bytes.Buffer) (ret interface{}, remainder []byte, retErr error) {
-	code, err := buffer.ReadByte()
-	if nil != err {
+func Unmarshal(r ByteReader) (ret interface{}, retErr error) {
+	code, err := r.ReadByte()
+	if err != nil {
 		retErr = err
+		return
 	}
-
-	ret, retErr = unmarshal(code, buffer)
-	remainder = buffer.Bytes()
-	return
+	return unmarshal(code, r)
 }
 
-func unmarshal(code byte, buffer *bytes.Buffer) (ret interface{}, retErr error) {
+func unmarshal(code byte, r ByteReader) (ret interface{}, retErr error) {
 	switch code {
 	case CODE_NONE:
 		ret = nil
 	case CODE_INT:
 		fallthrough
 	case CODE_INT2:
-		ret, retErr = readInt32(buffer)
+		ret, retErr = readInt32(r)
 	case CODE_FLOAT:
-		ret, retErr = readFloat64(buffer)
+		ret, retErr = readFloat64(r)
 	case CODE_STRING:
 		fallthrough
 	case CODE_UNICODE:
 		fallthrough
 	case CODE_TSTRING:
-		ret, retErr = readString(buffer)
+		ret, retErr = readString(r)
 	case CODE_TUPLE:
 		fallthrough
 	case CODE_LIST:
-		ret, retErr = readList(buffer)
+		ret, retErr = readList(r)
 	case CODE_DICT:
-		ret, retErr = readDict(buffer)
+		ret, retErr = readDict(r)
 	default:
 		retErr = ERR_UNKNOWN_CODE
 	}
@@ -74,20 +70,20 @@ func unmarshal(code byte, buffer *bytes.Buffer) (ret interface{}, retErr error) 
 	return
 }
 
-func readInt32(buffer *bytes.Buffer) (ret int32, retErr error) {
+func readInt32(r ByteReader) (ret int32, retErr error) {
 	var tmp int32
 	retErr = ERR_PARSE
-	if retErr = binary.Read(buffer, binary.LittleEndian, &tmp); nil == retErr {
+	if retErr = binary.Read(r, binary.LittleEndian, &tmp); nil == retErr {
 		ret = tmp
 	}
 
 	return
 }
 
-func readFloat64(buffer *bytes.Buffer) (ret float64, retErr error) {
+func readFloat64(r ByteReader) (ret float64, retErr error) {
 	retErr = ERR_PARSE
 	tmp := make([]byte, 8)
-	if num, err := buffer.Read(tmp); nil == err && 8 == num {
+	if num, err := r.Read(tmp); nil == err && 8 == num {
 		bits := binary.LittleEndian.Uint64(tmp)
 		ret = math.Float64frombits(bits)
 		retErr = nil
@@ -96,25 +92,25 @@ func readFloat64(buffer *bytes.Buffer) (ret float64, retErr error) {
 	return
 }
 
-func readString(buffer *bytes.Buffer) (ret string, retErr error) {
+func readString(r ByteReader) (ret string, retErr error) {
 	var strLen int32
 	strLen = 0
 	retErr = ERR_PARSE
-	if err := binary.Read(buffer, binary.LittleEndian, &strLen); nil != err {
+	if err := binary.Read(r, binary.LittleEndian, &strLen); nil != err {
 		retErr = err
 		return
 	}
 
 	retErr = nil
 	buf := make([]byte, strLen)
-	buffer.Read(buf)
+	r.Read(buf)
 	ret = string(buf)
 	return
 }
 
-func readList(buffer *bytes.Buffer) (ret []interface{}, retErr error) {
+func readList(r ByteReader) (ret []interface{}, retErr error) {
 	var listSize int32
-	if retErr = binary.Read(buffer, binary.LittleEndian, &listSize); nil != retErr {
+	if retErr = binary.Read(r, binary.LittleEndian, &listSize); nil != retErr {
 		return
 	}
 
@@ -123,12 +119,12 @@ func readList(buffer *bytes.Buffer) (ret []interface{}, retErr error) {
 	var val interface{}
 	ret = make([]interface{}, int(listSize))
 	for idx := 0; idx < int(listSize); idx++ {
-		code, err = buffer.ReadByte()
+		code, err = r.ReadByte()
 		if nil != err {
 			break
 		}
 
-		val, err = unmarshal(code, buffer)
+		val, err = unmarshal(code, r)
 		if nil != err {
 			retErr = err
 			break
@@ -139,14 +135,14 @@ func readList(buffer *bytes.Buffer) (ret []interface{}, retErr error) {
 	return
 }
 
-func readDict(buffer *bytes.Buffer) (ret map[interface{}]interface{}, retErr error) {
+func readDict(r ByteReader) (ret map[interface{}]interface{}, retErr error) {
 	var code byte
 	var err error
 	var key interface{}
 	var val interface{}
 	ret = make(map[interface{}]interface{})
 	for {
-		code, err = buffer.ReadByte()
+		code, err = r.ReadByte()
 		if nil != err {
 			break
 		}
@@ -155,18 +151,18 @@ func readDict(buffer *bytes.Buffer) (ret map[interface{}]interface{}, retErr err
 			break
 		}
 
-		key, err = unmarshal(code, buffer)
+		key, err = unmarshal(code, r)
 		if nil != err {
 			retErr = err
 			break
 		}
 
-		code, err = buffer.ReadByte()
+		code, err = r.ReadByte()
 		if nil != err {
 			break
 		}
 
-		val, err = unmarshal(code, buffer)
+		val, err = unmarshal(code, r)
 		if nil != err {
 			retErr = err
 			break
