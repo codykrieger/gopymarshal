@@ -3,6 +3,7 @@ package gopymarshal
 import (
 	"encoding/binary"
 	"errors"
+	"io"
 	"math"
 )
 
@@ -22,8 +23,8 @@ const (
 )
 
 var (
-	ERR_PARSE        = errors.New("invalid data")
 	ERR_UNKNOWN_CODE = errors.New("unknown code")
+	ErrUnexpectedEOF = errors.New("unexpected eof")
 )
 
 type ByteReader interface {
@@ -35,7 +36,7 @@ type ByteReader interface {
 func Unmarshal(r ByteReader) (ret interface{}, retErr error) {
 	code, err := r.ReadByte()
 	if err != nil {
-		retErr = err
+		retErr = ErrUnexpectedEOF
 		return
 	}
 	return unmarshal(code, r)
@@ -72,7 +73,7 @@ func unmarshal(code byte, r ByteReader) (ret interface{}, retErr error) {
 
 func readInt32(r ByteReader) (ret int32, retErr error) {
 	var tmp int32
-	retErr = ERR_PARSE
+	retErr = ErrUnexpectedEOF
 	if retErr = binary.Read(r, binary.LittleEndian, &tmp); nil == retErr {
 		ret = tmp
 	}
@@ -81,7 +82,7 @@ func readInt32(r ByteReader) (ret int32, retErr error) {
 }
 
 func readFloat64(r ByteReader) (ret float64, retErr error) {
-	retErr = ERR_PARSE
+	retErr = ErrUnexpectedEOF
 	tmp := make([]byte, 8)
 	if num, err := r.Read(tmp); nil == err && 8 == num {
 		bits := binary.LittleEndian.Uint64(tmp)
@@ -95,7 +96,7 @@ func readFloat64(r ByteReader) (ret float64, retErr error) {
 func readString(r ByteReader) (ret string, retErr error) {
 	var strLen int32
 	strLen = 0
-	retErr = ERR_PARSE
+	retErr = ErrUnexpectedEOF
 	if err := binary.Read(r, binary.LittleEndian, &strLen); nil != err {
 		retErr = err
 		return
@@ -103,8 +104,18 @@ func readString(r ByteReader) (ret string, retErr error) {
 
 	retErr = nil
 	buf := make([]byte, strLen)
-	r.Read(buf)
+
+	n, err := r.Read(buf)
+	if int32(n) != strLen {
+		retErr = ErrUnexpectedEOF
+		if err != nil && err != io.EOF {
+			retErr = err
+		}
+		return
+	}
+
 	ret = string(buf)
+
 	return
 }
 
@@ -121,6 +132,7 @@ func readList(r ByteReader) (ret []interface{}, retErr error) {
 	for idx := 0; idx < int(listSize); idx++ {
 		code, err = r.ReadByte()
 		if nil != err {
+			retErr = ErrUnexpectedEOF
 			break
 		}
 
@@ -144,6 +156,7 @@ func readDict(r ByteReader) (ret map[interface{}]interface{}, retErr error) {
 	for {
 		code, err = r.ReadByte()
 		if nil != err {
+			retErr = ErrUnexpectedEOF
 			break
 		}
 
@@ -159,6 +172,7 @@ func readDict(r ByteReader) (ret map[interface{}]interface{}, retErr error) {
 
 		code, err = r.ReadByte()
 		if nil != err {
+			retErr = ErrUnexpectedEOF
 			break
 		}
 
